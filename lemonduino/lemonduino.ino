@@ -20,7 +20,7 @@ int N_OUTPUT_PINS = 2;
 bool pulsing = false;
 int pulsingStartTime = 0;
 int pulseDuration = 50; //speed for the delay factor
-
+int diodePin = 10;
 
 // General values
 unsigned long msAtStart;
@@ -72,34 +72,28 @@ void setup() {
 // the loop function runs over and over again until power down or reset
 void loop() {
   serialInput = Serial.readStringUntil(untilChar);
-  if (serialInput != "") {
-    if (serialInput == "WHO") {
-      LettingKnow();
-    }
-    if (serialInput == "DISCONNECT") {
-      Disconnect();
-    }
-    if (!connected){
-      return;
-    }
-    ListenForOrders();
-  }
-  if (!connected){
-    return;
-  }
+  if (serialInput != "") ReactToSerialInput(serialInput);
+  // CancellingPulse
+  if(pulsing && millis() - pulseStartTime > pulseLength) CancelPulse();
+
+  if (!connected) return;
   UpdateThreshold();
-  if(lineInUse){
-    LineInEvaluate();
-  }
-  if(pulsing && millis() - pulseStartTime > pulseLength){
-    CancelPulse();
-  }
+  if(lineInUse) LineInEvaluate();
 }
 
-void UpdateThreshold(){
+void ReactToSerialInput(String serialInput) {
+  if (serialInput == "") return; //no input
+  if (serialInput == "WHO") LettingKnow(); // This blocks the code until the connection is established
+  if (serialInput == "DISCONNECT") Disconnect();
+  if (!connected) return; //will be false for both connection and disconnection times
+  ListenForOrders(serialInput);
+}
+
+void UpdateThreshold() {
   lineInThreshold = AnalogRead(thresholdPin);
 }
 
+// The function blocks rest of the code until the connection is established or Timeout reached
 void LettingKnow() {
   unsigned long t = millis();
   while (true) {
@@ -117,85 +111,69 @@ void LettingKnow() {
   }
 }
 
-void Connect(){
+void Connect() {
   msAtStart = millis();
   connected = true;
 }
 
-void Disconnect(){
+void Disconnect() {
   Restart();
   connected = false;
 }
 
-void Restart(){
+void Restart() {
   CancelPulse();
 }
 
-void LineInEvaluate(){
+void LineInEvaluate() {
   int lineIn = AnalogRead(lineInPin);
   if(lineIn > lineInThreshold){
-    if(pulsing){
-      return;
-    }
+    if(pulsing) return;
     LineInPulse();
   } else {
-    if(pulsing){
-      CancelPulse();
-    }
+    if(pulsing) CancelPulse();
   }
 }
 
-void ListenForOrders() {
-  if (serialInput != "") {
-    if(serialInput.substring(0,6) == "PULSE+"){ 
-      StartPulse(serialInput);
-      SendDone();
-    }
-    if (serialInput == "PULSE-") {
-      CancelPulse();
-      SendDone();
-    }
-    if (serialInput == "BLINK") {
-      Blink();
-      SendDone();
-    }
-    if (serialInput == "PHOTO-START") {
-      photoresistorUse = true;
-      SendDone();
-    }
-    if (serialInput == "PHOTO-END") {
-      photoresistorUse = false;
-      SendDone();
-    }
-    if (serialInput == "PHOTO-DATA+") {
-      photoSendData = true;
-    }
-    if (serialInput == "PHOTO-DATA-") {
-      photoSendData = false;
-    }
-    if (serialInput == "PHOTO-CALIBRATE") {
-      CalibratePhotoresistor();
-      SendDone();
-    }
-    if (serialInput == "RESTART") {
-      Restart();
-    }
+void ListenForOrders(String serialInput) {
+  if(serialInput.substring(0,6) == "PULSE+"){ 
+    StartPulse(serialInput);
+    SendDone();
+  }
+  if (serialInput == "PULSE-") {
+    CancelPulse();
+    SendDone();
+  }
+  if (serialInput == "BLINK") {
+    Blink();
+    SendDone();
+  }
+  if (serialInput == "LINEIN-START") {
+    lineInUse = true;
+    SendDone();
+  }
+  if (serialInput == "LINEIN-END") {
+    lineInUse = false;
+    SendDone();
+  }
+  if (serialInput == "RESTART") {
+    Restart();
   }
 }
 
-unsigned long GetTime(){
+unsigned long GetTime() {
   unsigned long msSinceStart = millis() - msAtStart;
   return msSinceStart;
 }
 
-void SendDone(){
+void SendDone() {
   unsigned long msSinceStart = GetTime();
   char buf[14];
   sprintf(buf,"DONE%lu", msSinceStart);
   Serial.println(buf);
 }
 
-void Blink(){
+void Blink() {
   digitalWrite(13, HIGH);
   delay(100);
   digitalWrite(13, LOW);
