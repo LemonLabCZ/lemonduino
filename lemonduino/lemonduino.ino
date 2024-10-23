@@ -18,39 +18,33 @@ int lettingKnowTime = 1000; //duration of how long will we keep the connection t
 int outputPins[] = {8, 9};
 int N_OUTPUT_PINS = 2;
 bool pulsing = false;
-int pulsingStartTime = 0;
-int pulseDuration = 50; //speed for the delay factor
+int pulseStartTime = 0;
+int minPulseDuration = 50;
+int pulseLength = 50; //speed for the delay factor
 int diodePin = 10;
 
 // General values
 unsigned long msAtStart;
 unsigned long msFromStart;
+int dataSendSpeed = 50;
 
 // THRESHOLD
 int thresholdPin = A1;
 int universalThreshold = 500;
 
 // LINE IN
-int lineInPin = A0;
-bool lineInentData = false;
-bool lineInUse = false;
-int lineInThreshold = 500;
-int lineInOuput = outputPins[0];
+int lineinPin = A0;
+bool lineinSendData = false;
+unsigned long lineinLastDataSentTime;
+bool lineinConfirmPulse = false;
+bool lineinUse = false;
+int lineinThreshold = 500;
+int lineinOutputPin = outputPins[0];
 
 // MICROPHONE
 bool microphoneUse = false;
 int microphonePin = A2;
 bool microphoneSendData = false;
-
-// PHOTORESISTOR
-int photoresistorPin = 0;
-int photoresistorThreshold = 500;
-int photoTresholdMargin = 100;
-int photoCalibrationTime = 200;
-bool photoActionSent = false;
-bool photoSendData = false;
-int photoTimeSent = 0;
-int photoSendingDelay = 200;
 
 char untilChar = '\!';
 
@@ -65,7 +59,7 @@ void setup() {
   for(int i = 0; i < N_OUTPUT_PINS; i++){
     pinMode(outputPins[i], OUTPUT);
   }
-  pinMode(lineInPin, INPUT);
+  pinMode(lineinPin, INPUT);
   pinMode(thresholdPin, INPUT);
 }
 
@@ -78,7 +72,7 @@ void loop() {
 
   if (!connected) return;
   UpdateThreshold();
-  if(lineInUse) LineInEvaluate();
+  if(lineinUse) LineInEvaluate();
 }
 
 void ReactToSerialInput(String serialInput) {
@@ -90,7 +84,7 @@ void ReactToSerialInput(String serialInput) {
 }
 
 void UpdateThreshold() {
-  lineInThreshold = AnalogRead(thresholdPin);
+  lineinThreshold = analogRead(thresholdPin);
 }
 
 // The function blocks rest of the code until the connection is established or Timeout reached
@@ -107,7 +101,7 @@ void LettingKnow() {
       Serial.println("TIME IS UP");
       break;
     }
-    delay(speed);
+    delay(dataSendSpeed);
   }
 }
 
@@ -126,8 +120,16 @@ void Restart() {
 }
 
 void LineInEvaluate() {
-  int lineIn = AnalogRead(lineInPin);
-  if(lineIn > lineInThreshold){
+  int linein = analogRead(lineinPin);
+  if (lineinSendData){
+    unsigned long t = millis();
+    if(t - lineinLastDataSentTime < dataSendSpeed) return;
+    char buf[11];
+    //sprintf(buf,"LINEIN=%d", linein);
+    sprintf(buf,"%d", linein);
+    Serial.println(buf);
+  }
+  if(linein > lineinThreshold){
     if(pulsing) return;
     LineInPulse();
   } else {
@@ -136,28 +138,49 @@ void LineInEvaluate() {
 }
 
 void ListenForOrders(String serialInput) {
+  bool validOrder = false;
   if(serialInput.substring(0,6) == "PULSE+"){ 
     StartPulse(serialInput);
-    SendDone();
+    validOrder = true;
   }
   if (serialInput == "PULSE-") {
     CancelPulse();
-    SendDone();
+    validOrder = true;
   }
   if (serialInput == "BLINK") {
     Blink();
-    SendDone();
+    validOrder = true;
   }
   if (serialInput == "LINEIN-START") {
-    lineInUse = true;
-    SendDone();
+    lineinUse = true;
+    validOrder = true;
+  }
+  if (serialInput == "LINEIN-DATA-START") {
+    lineinSendData = true;
+    validOrder = true;
+  }
+  if (serialInput == "LINEIN-DATA-END") {
+    lineinSendData = false;
+    validOrder = true;
+  }
+  if (serialInput == "LINEIN-PULSECONFIRM-START") {
+    lineinConfirmPulse = true;
+    validOrder = true;
+  }
+  if (serialInput == "LINEIN-PULSECONFIRM-END") {
+    lineinConfirmPulse = false;
+    validOrder = true;
   }
   if (serialInput == "LINEIN-END") {
-    lineInUse = false;
-    SendDone();
+    lineinUse = false;
+    validOrder = true;
   }
   if (serialInput == "RESTART") {
     Restart();
+    validOrder = true;
+  }
+  if(validOrder) {
+    SendDone();
   }
 }
 
@@ -175,14 +198,19 @@ void SendDone() {
 
 void Blink() {
   digitalWrite(13, HIGH);
+  digitalWrite(diodePin, HIGH);
   delay(100);
+  digitalWrite(diodePin, LOW);
   digitalWrite(13, LOW);
 }
 
 void LineInPulse() {
   pulsing = true;
   pulseStartTime = millis();
-  digitalWrite(lineInPulse, HIGH);
+  digitalWrite(lineinOutputPin, HIGH);
+  if(lineinConfirmPulse) {
+    Serial.println("LINEIN-PULSE");
+  }
 }
 
 void StartPulse(String inputString){
